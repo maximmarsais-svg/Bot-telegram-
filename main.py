@@ -1,11 +1,27 @@
 import os
 import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# --- TON TOKEN TELEGRAM ---
-TOKEN = "8691676306:AAEZk949hc6hSlUKxiw1K2P54ag_yMSagJU"
+# --- PETIT SERVEUR WEB POUR RENDER (GRATUIT) ---
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
 
+def run_http_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+# Lancement du serveur web dans un thread séparé
+threading.Thread(target=run_http_server, daemon=True).start()
+
+# --- CONFIGURATION DU BOT ---
+TOKEN = "8691676306:AAEZk949hc6hSlUKxiw1K2P54ag_yMSagJU"
 DATA_FILE = "vault_data.json"
 
 def load_data():
@@ -102,4 +118,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
