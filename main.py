@@ -3,6 +3,9 @@ import json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+# --- TON TOKEN TELEGRAM ---
+TOKEN = "8691676306:AAEZk949hc6hSlUKxiw1K2P54ag_yMSagJU"
+
 DATA_FILE = "vault_data.json"
 
 def load_data():
@@ -88,19 +91,15 @@ async def retrieve_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_video(video=item["file_id"])
 
 def main():
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
-        print("Erreur : BOT_TOKEN non défini.")
-        return
-
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("save", save_media))
     app.add_handler(CommandHandler("get", retrieve_media))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
 
+    print("Le bot démarre...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-  
+        
