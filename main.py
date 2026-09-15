@@ -21,7 +21,7 @@ def run_http_server():
 threading.Thread(target=run_http_server, daemon=True).start()
 
 # --- CONFIGURATION DU BOT ---
-TOKEN = "8691676306:AAH-w2FCqk1OSTy19neTKftpGLSLDzbPZpY"
+TOKEN = os.environ.get("BOT_TOKEN")
 DATA_FILE = "vault_data.json"
 
 def load_data():
