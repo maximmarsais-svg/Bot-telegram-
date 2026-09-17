@@ -1,116 +1,130 @@
 import os
-import json
-import threading
+import asyncio
+import psycopg2
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# --- PETIT SERVEUR WEB POUR RENDER (GRATUIT) ---
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+# --- SERVEUR KEEP-ALIVE POUR RENDER ---
+class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running!")
+        self.wfile.write(b"Bot is alive!")
 
 def run_http_server():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    server = HTTPServer(("0.0.0.0", port), KeepAliveHandler)
     server.serve_forever()
 
-# Lancement du serveur web dans un thread séparé
-threading.Thread(target=run_http_server, daemon=True).start()
+# --- CONNEXION BASE DE DONNÉES SUPABASE ---
+DB_URL = os.environ.get("DATABASE_URL")
 
-# --- CONFIGURATION DU BOT ---
-TOKEN = os.environ.get("BOT_TOKEN")
-DATA_FILE = "vault_data.json"
+def get_db_connection():
+    return psycopg2.connect(DB_URL)
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+def save_media_to_db(password, media_list):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    for item in media_list:
+        cur.execute(
+            "INSERT INTO vault (password, file_type, file_id) VALUES (%s, %s, %s)",
+            (password, item["type"], item["id"])
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
+def get_media_from_db(password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT file_type, file_id FROM vault WHERE password = %s ORDER BY id ASC", (password,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [{"type": row[0], "id": row[1]} for row in rows]
 
+# --- COMMANDES TELEGRAM ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 **Bienvenue sur le Coffre-fort Partagé !**\n\n"
-        "📸 **Pour sauvegarder un média :**\n"
-        "1. Transfère ou envoie des photos/vidéos au bot.\n"
-        "2. Envoie la commande `/save MOT_DE_PASSE` juste après.\n\n"
-        "🔓 **Pour récupérer des médias :**\n"
-        "Envoie la commande `/get MOT_DE_PASSE`.",
-        parse_mode="Markdown"
+        "🔒 **Coffre-fort Illimité & Permanent**\n\n"
+        "1. Envoie tes photos/vidéos (par paquets de 10, 50 ou 100).\n"
+        "2. Tape `/save MOT_DE_PASSE` pour tout enregistrer.\n"
+        "3. Tape `/get MOT_DE_PASSE` pour récupérer tes médias."
     )
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if msg.photo:
-        file_id = msg.photo[-1].file_id
-        file_type = "photo"
-    elif msg.video:
-        file_id = msg.video.file_id
-        file_type = "video"
-    else:
-        return
+    if "user_queue" not in context.user_data:
+        context.user_data["user_queue"] = []
 
-    if "temp_media" not in context.user_data:
-        context.user_data["temp_media"] = []
-    
-    context.user_data["temp_media"].append({"type": file_type, "file_id": file_id})
-    count = len(context.user_data["temp_media"])
-    await update.message.reply_text(f"📥 {count} média(s) reçu(s) ! Envoie `/save MOT_DE_PASSE` pour les verrouiller.")
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        context.user_data["user_queue"].append({"type": "photo", "id": file_id})
+    elif update.message.video:
+        file_id = update.message.video.file_id
+        context.user_data["user_queue"].append({"type": "video", "id": file_id})
 
-async def save_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "temp_media" not in context.user_data or not context.user_data["temp_media"]:
-        await update.message.reply_text("⚠️ Envoie ou transfère d'abord des photos/vidéos au bot avant de faire `/save`.")
-        return
-
+async def save_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Utilisation : `/save MON_MOT_DE_PASSE`")
+        await update.message.reply_text("⚠️ Précise un mot de passe : `/save MON_CODE`")
         return
 
     password = context.args[0]
-    media_list = context.user_data.pop("temp_media")
+    queue = context.user_data.get("user_queue", [])
 
-    data = load_data()
-    if password not in data:
-        data[password] = []
+    if not queue:
+        await update.message.reply_text("⚠️ Aucune photo/vidéo en attente. Envoie-les d'abord !")
+        return
 
-    data[password].extend(media_list)
-    save_data(data)
+    # Sauvegarde dans Supabase
+    save_media_to_db(password, queue)
+    
+    added = len(queue)
+    context.user_data["user_queue"] = []
+
+    all_media = get_media_from_db(password)
+    total = len(all_media)
 
     await update.message.reply_text(
-        f"🔒 {len(media_list)} média(s) ajouté(s) au dossier verrouillé par le mot de passe : `{password}`",
-        parse_mode="Markdown"
+        f"✅ **{added} fichier(s)** ajouté(s) en base !\n"
+        f"📁 Total enregistré pour le code `{password}` : **{total} fichier(s)**."
     )
 
-async def retrieve_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Utilisation : `/get MON_MOT_DE_PASSE`")
+        await update.message.reply_text("⚠️ Précise le mot de passe : `/get MON_CODE`")
         return
 
     password = context.args[0]
-    data = load_data()
+    items = get_media_from_db(password)
 
-    if password not in data or not data[password]:
-        await update.message.reply_text("❌ Aucun média trouvé pour ce mot de passe.")
+    if not items:
+        await update.message.reply_text("❌ Aucun fichier trouvé pour ce mot de passe.")
         return
 
-    await update.message.reply_text(f"🔓 Mot de passe correct ! Envoi des médias du dossier `{password}`...")
-    for item in data[password]:
-        if item["type"] == "photo":
-            await update.message.reply_photo(photo=item["file_id"])
-        elif item["type"] == "video":
-            await update.message.reply_video(video=item["file_id"])
+    await update.message.reply_text(f"📦 Envoi de {len(items)} fichier(s)...")
 
+    for item in items:
+        try:
+            if item["type"] == "photo":
+                await update.message.reply_photo(photo=item["id"])
+            elif item["type"] == "video":
+                await update.message.reply_video(video=item["id"])
+            await asyncio.sleep(0.3)  # Évite les blocages anti-spam
+        except Exception as e:
+            print(f"Erreur d'envoi : {e}")
+
+# --- DÉMARRAGE ---
 def main():
-    app = Application.builder().token(TOKEN).build()
+    Thread(target=run_http_server, daemon=True).start()
+
+    token = os.environ.get("BOT_TOKEN")
+    app = Application.builder().token(token).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("save", save_media))
-    app.add_handler(CommandHandler("get", retrieve_media))
+    app.add_handler(CommandHandler("save", save_cmd))
+    app.add_handler(CommandHandler("get", get_cmd))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
 
     print("Le bot démarre...")
