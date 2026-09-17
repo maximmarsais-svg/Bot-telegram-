@@ -21,11 +21,8 @@ def run_http_server():
 # --- CONNEXION BASE DE DONNÉES SUPABASE ---
 DB_URL = os.environ.get("DATABASE_URL")
 
-def get_db_connection():
-    return psycopg2.connect(DB_URL)
-
 def save_media_to_db(password, media_list):
-    conn = get_db_connection()
+    conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
     for item in media_list:
         cur.execute(
@@ -37,7 +34,7 @@ def save_media_to_db(password, media_list):
     conn.close()
 
 def get_media_from_db(password):
-    conn = get_db_connection()
+    conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
     cur.execute("SELECT file_type, file_id FROM vault WHERE password = %s ORDER BY id ASC", (password,))
     rows = cur.fetchall()
@@ -49,7 +46,7 @@ def get_media_from_db(password):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🔒 **Coffre-fort Illimité & Permanent**\n\n"
-        "1. Envoie tes photos/vidéos (par paquets de 10, 50 ou 100).\n"
+        "1. Envoie tes photos/vidéos.\n"
         "2. Tape `/save MOT_DE_PASSE` pour tout enregistrer.\n"
         "3. Tape `/get MOT_DE_PASSE` pour récupérer tes médias."
     )
@@ -77,7 +74,6 @@ async def save_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Aucune photo/vidéo en attente. Envoie-les d'abord !")
         return
 
-    # Sauvegarde dans Supabase
     save_media_to_db(password, queue)
     
     added = len(queue)
@@ -111,7 +107,7 @@ async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_photo(photo=item["id"])
             elif item["type"] == "video":
                 await update.message.reply_video(video=item["id"])
-            await asyncio.sleep(0.3)  # Évite les blocages anti-spam
+            await asyncio.sleep(0.3)
         except Exception as e:
             print(f"Erreur d'envoi : {e}")
 
@@ -128,7 +124,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
 
     print("Le bot démarre...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
