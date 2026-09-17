@@ -111,8 +111,8 @@ async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Erreur d'envoi : {e}")
 
-# --- DÉMARRAGE ---
-def main():
+# --- DÉMARRAGE ASYNC ---
+async def main_async():
     Thread(target=run_http_server, daemon=True).start()
 
     token = os.environ.get("BOT_TOKEN")
@@ -124,8 +124,15 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
 
     print("Le bot démarre...")
-    app.run_polling(drop_pending_updates=True)
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        # Garde le bot actif
+        await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
-    
+    try:
+        asyncio.run(main_async())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+        
